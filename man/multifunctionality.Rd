@@ -13,8 +13,8 @@
   \itemize{ \item ELE: Elevation of the site \item LAT &
   LONG: Location of the site \item SLO: Site slope \item
   SAC: Soil sand content \item PCA_C1, PCA_C2, PCA_C3,
-  PCA_C4: Principal components of a large set of primarily
-  climatic features \item SR: Species richeness \item MUL:
+  PCA_C4: Principal components of a set of 21 climatic
+  features \item SR: Species richness \item MUL:
   Multifunctionality }
 }
 \references{

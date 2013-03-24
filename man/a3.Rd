@@ -52,6 +52,10 @@
  require(randomForest)
  a3(rating ~ .+0, attitude, randomForest, p.acc = 0.1)
 
+ # Set the ntrees argument of the randomForest function to 100
+
+ a3(rating ~ .+0, attitude, randomForest, p.acc = 0.1, model.args = list(ntree = 100))
+
  # Speed up the calculation by doing 5-fold cross-validation.
  # This is faster and more conservative (i.e. it should over-estimate error)
 

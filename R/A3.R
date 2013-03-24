@@ -31,6 +31,10 @@
 #'  require(randomForest)
 #'  a3(rating ~ .+0, attitude, randomForest, p.acc = 0.1)
 #'  
+#'  # Set the ntrees argument of the randomForest function to 100
+#'  
+#'  a3(rating ~ .+0, attitude, randomForest, p.acc = 0.1, model.args = list(ntree = 100))
+#'  
 #'  # Speed up the calculation by doing 5-fold cross-validation.
 #'  # This is faster and more conservative (i.e. it should over-estimate error)
 #'  
@@ -53,12 +57,15 @@ a3 <- function(formula, data, model.fn, model.args = list(), ...){
   
   model.fn.w.args <- function(y, x){
     dat <- data.frame(cbind(y, x))
+    
     names(dat) <-  c("y", paste("x", 1:ncol(x), sep=""))
     
-    model.args[["formula"]] <- y ~ . + 0
-    model.args[["data"]] <- dat
+    new.model.args = list(formula = y ~ . + 0, data = dat)
+    for(n in names(model.args)){
+      new.model.args[[n]] = model.args[[n]]
+    }
     
-    return(do.call(model.fn, model.args))
+    return(do.call(model.fn, new.model.args))
   }
   
   simulate.fn <- function(y, x, new.x, ...){
@@ -70,8 +77,6 @@ a3 <- function(formula, data, model.fn, model.args = list(), ...){
     names(new.data) <- paste("x", 1:ncol(x), sep="")
     return(predict(reg, new.data))
   }
-  
-  
   
   a3.base(formula, data, model.fn.w.args, simulate.fn, ...)
 }
@@ -107,10 +112,10 @@ a3 <- function(formula, data, model.fn, model.args = list(), ...){
 #'  a3(rating ~ ., attitude, lm, p.acc = 0.1)
 #'  }
 
-
 a3.lm <- function(formula, data, family = gaussian, ...){
   a3(formula, data, model.fn = glm, model.args = list(family = family), ...)
 }
+
 
 #' Base A3 Results Calculation
 #'
@@ -163,7 +168,6 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
   if(n.folds == 0){
     n.folds <- length(y)
   }
-
   
   my.apply <- lapply
   if( ! is.null(p.acc) ){
@@ -192,7 +196,9 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
         return("+ ")
       }
     })
-    signs[1] <- "  "
+    if(signs[1] == "+ "){
+      signs[1] <- "  " # removed the plus sign for the overall model accuracy
+    }
     res <- paste(signs, res, sep="")
     return(res)
   }
@@ -246,6 +252,9 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
       
       # Remove a column of data if we are at the un-randomized case
       if((c != 0) && (rep == "default")){
+        if(top == 1){
+          return(list(R2=0)); # if there is only one feature column added R^2 should be full value
+        }
         new.x <- as.data.frame(new.x[,-c])
       }
       
@@ -364,7 +373,7 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
       }
       
       names(items) <- c("Base",paste("Rep", 1:n.reps))
-      res$all.R2[[paste(entry.names[i])]] <-items
+      res$all.R2[[paste(entry.names[i])]] <- items
       
       # rank the items by R2
       dist <- rank(items)
@@ -543,10 +552,10 @@ print.A3 <- function(x, ...){
 
 #' Nicely Formatted Fit Results
 #'
-#' Creates a LaTeX or HTML table of results. Depends on the \pkg{xtable} package.
+#' Creates a LaTeX table of results. Depends on the \pkg{xtable} package.
 #'
 #' @param x an A3 object.
-#' @param ... additional arguments passed to the \code{\link{xtable}} function.
+#' @param ... additional arguments passed to the \code{\link{print.xtable}} function.
 #' @method xtable A3
 #' @examples
 #'  x <- a3.lm(rating ~ ., attitude, p.acc = NULL)
@@ -559,8 +568,22 @@ xtable.A3 <- function(x, ...){
   }
   
   data <- x$table
-  #names(data) <- gsub("R^2","$R^2$", names(data), fixed=TRUE)
-  xtable(data, align=c("l","|", rep("r", ncol(data))), ...)
+  names(data) <- gsub("p value","Pr(>R^2)", names(data), fixed=TRUE) 
+  names(data) <- gsub("R^2","$R^2$", names(data), fixed=TRUE)
+  print(xtable(data, align=c("l","|", rep("r", ncol(data))), ...), sanitize.colnames.function = function(x){x}, sanitize.text.function = function(x){
+    return(sapply(x, function(x){
+      trimmed = gsub("(^ +)|( +$)", "", x)
+      if((! is.na(suppressWarnings(as.numeric(x)))) && suppressWarnings(as.numeric(x))==trimmed){
+        return(paste0("$", x, "$"))
+      }else if(substr(trimmed, nchar(trimmed), nchar(trimmed))=="%"){
+        return(paste0("$", gsub("%", "\\%", trimmed, fixed=T), "$"));
+      }else if(substr(trimmed, 1, 1)=="<"){
+        return(paste0("$", trimmed, "$"));
+      }else{
+        return (gsub("_", "\\_", x, fixed=T));
+      }
+    }))
+  })
 }
 
 
@@ -653,6 +676,10 @@ a3.r2 <- function(y, x, simulate.fn, cv.folds){
 
 # Default generator, use bootstrap 
 a3.gen.default <- function(x, n.reps){
+  if(length(unique(x))==1){
+    #it's a constant, such as an intercept
+    return(a3.gen.normal(x, n.reps))
+  }
   a3.gen.bootstrap(x, n.reps)
 }
 
@@ -674,6 +701,9 @@ a3.gen.resample <- function(x, n.reps){
 a3.gen.normal <- function(x, n.reps){
   mu <- mean(x)
   sd <- sd(x)
+  if(sd == 0){
+    sd <- 1
+  }
   res <- lapply(1:n.reps, function(r) {rnorm(length(x), mu, sd)})
   res$default <- x
   res

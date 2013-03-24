@@ -8,10 +8,10 @@
   \item{x}{an A3 object.}
 
   \item{...}{additional arguments passed to the
-  \code{\link{xtable}} function.}
+  \code{\link{print.xtable}} function.}
 }
 \description{
-  Creates a LaTeX or HTML table of results. Depends on the
+  Creates a LaTeX table of results. Depends on the
   \pkg{xtable} package.
 }
 \examples{
