@@ -9,6 +9,7 @@
 #' @param model.args a list of arguments passed to \code{model.fn}.
 #' @param ... additional arguments passed to \code{\link{a3.base}}.
 #' @return S3 \code{A3} object; see \code{\link{a3.base}} for details
+#' @references Scott Fortmann-Roe (2015). Consistent and Clear Reporting of Results from Diverse Modeling Techniques: The A3 Method. Journal of Statistical Software, 66(7), 1-23. <http://www.jstatsoft.org/v66/i07/>
 #' @examples
 #' \donttest{
 #'  ## Standard linear regression results:
@@ -129,6 +130,8 @@ a3.lm <- function(formula, data, family = gaussian, ...){
 #' @param data.generating.fn the function used to generate stochastic noise for calculation of exact p values.
 #' @param p.acc the desired accuracy for the calculation of exact p values. The entire calculation process will be repeated \eqn{1/p.acc} times so this can have a dramatic affect on time required. Set to \code{NULL} to disable the calculation of p values.
 #' @param features whether to calculate the average slopes, added \eqn{R^2} and p values for each of the features in addition to the overall model.
+#' @param slope.sample if not NULL the sample size for use to calculate the average slopes (useful for very large data sets).
+#' @param slope.displacement the amount of displacement to take in calculating the slopes. May be a single number in which case the same slope is applied to all features. May also be a named vector where there is a name for each feature.
 #' @return S3 \code{A3} object containing:
 #' \item{model.R2}{The cross validated \eqn{R^2} for the entire model.}
 #' \item{feature.R2}{The cross validated \eqn{R^2}'s for the features (if calculated).}
@@ -141,7 +144,7 @@ a3.lm <- function(formula, data, family = gaussian, ...){
 #' \item{all.slopes}{Slopes for each of the observations for each of the features (if calculated).}
 #' \item{table}{The A3 results table.}
 #' 
-a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.generating.fn = replicate(ncol(x), a3.gen.default), p.acc = 0.01, features = TRUE){
+a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.generating.fn = replicate(ncol(x), a3.gen.default), p.acc = 0.01, features = TRUE, slope.sample = NULL, slope.displacement = 1){
   if(! is.null(p.acc)){
     if(p.acc <= 0 || p.acc >=1){
       stop("p.acc must be between 0 and 1. Set p.acc to NULL to disable the calculation of p values.")
@@ -157,7 +160,7 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
   }
   
   res <- list()
-  mf <- model.frame(formula, data)
+  mf <- model.frame(formula, data, drop.unused.levels = TRUE)
   x <- model.matrix(formula, mf)
   y <- model.response(mf)
   
@@ -171,9 +174,9 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
   
   my.apply <- lapply
   if( ! is.null(p.acc) ){
-    if( library(pbapply, quietly = TRUE, logical.return = TRUE) == TRUE ){
+    # if( library(pbapply, quietly = TRUE, logical.return = TRUE) == TRUE ){ # not needed due to depends
       my.apply <- pblapply # Show a progress bar if available
-    }
+    # }
   }
   
   # Calculate the groups for cross validation
@@ -185,7 +188,7 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
   })
   
   
-  r2.formater <- function(x){
+  r2.formatter <- function(x){
     signs <- sign(x)
     x <- abs(x)*100
     res <- paste(format(round(x, 1), digits = 3), "%")
@@ -203,7 +206,11 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
     return(res)
   }
   
-  p.formater <- function(x){
+  p.formatter <- function(x){
+    if(length(x) == 0){
+      return(c()) 
+    }
+    
     res <- format(x, digits = 4)
     for(i in 1:length(x)){
       if(x[i] == 0){
@@ -211,6 +218,14 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
       }
     }
     return(res)
+  }
+  
+  slope.formatter <- function(x){
+    if(length(x) == 0){
+      return(c()) 
+    }
+    
+    format(x, digits = 3)
   }
   
   # Setup iterations
@@ -275,16 +290,16 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
   
   if(features){
     get.names <- function(formula, data){
-      t <- terms(formula, data=data)
-      l <- attr(t, "term.labels")
-      if(attr(t, "intercept")==1){
-        l <- c("(Intercept)",l)
-      }
-      return(l)
+      #t <- terms(formula, data=data)
+      #l <- attr(t, "term.labels")
+      #if(attr(t, "intercept")==1){
+      #  l <- c("(Intercept)",l)
+      #}
+      return(attr(x, "dimnames")[[2]])
     }
     entry.names <- c("-Full Model-", get.names(formula, data = data))
     
-    getSlopes <- function (reg, data, epsilon = 0.001){
+    getSlopes <- function (reg, data){
       slopes <- list()
       for(col in 2:ncol(data)){
         slopes[[as.character(col)]] <- c()
@@ -295,7 +310,13 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
           
           point <- data[row,]
           at.point <- predict(reg, point)
-          dist <- 1
+          
+          if(length(slope.displacement) == 1){
+            dist <- slope.displacement
+          }else{
+            dist <- slope.displacement[entry.names[col]]
+          }
+          
           slope <- 0
           
           #while(TRUE){
@@ -333,6 +354,9 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
     # print(model.fn(y, x))
     slope.data <- data.frame(cbind(y, x))
     names(slope.data) <-  c("y", paste("x", 1:ncol(x), sep=""))
+	if(! is.null(slope.sample)){
+		slope.data <- slope.data[sample(1:nrow(slope.data), slope.sample),]
+	}
     res[["all.slopes"]] <- getSlopes(model.fn(y, x), slope.data)
     res[["all.slopes"]] <- lapply(res[["all.slopes"]], function(x){ round(x, digits = 8)})
     res[["slopes"]] = sapply(res[["all.slopes"]], function(x){
@@ -404,7 +428,7 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
       } 
     }
     
-    res$table <- data.frame(`Average Slope` = c("", res$slopes), `CV R^2` = r2.formater(r2), `p value` = p.formater(p.values), check.names=F)
+    res$table <- data.frame(`Average Slope` = c("", slope.formatter(res$slopes)), `CV R^2` = r2.formatter(r2), `p value` = p.formatter(p.values), check.names=F)
     res$model.R2 <- r2[1]
     res$feature.R2 <- r2[-1]
     res$model.p <- p.values[1]
@@ -417,7 +441,7 @@ a3.base <- function(formula, data, model.fn, simulate.fn,  n.folds = 10, data.ge
     r2 <- outputs[[1]]
     r2[-1] <- r2[1] - r2[-1] # get delta to overall model R2
     
-    res$table <- data.frame(`Average Slope` = c("", res$slopes), `CV R^2` = r2.formater(r2), check.names=F)
+    res$table <- data.frame(`Average Slope` = c("", slope.formatter(res$slopes)), `CV R^2` = r2.formatter(r2), check.names=F)
     res$all.R2 <- r2
     res$model.R2 <- r2[1]
     res$feature.R2 <- r2[-1]
@@ -497,7 +521,10 @@ plotPredictions <- function(x, show.equality = TRUE, xlab = "Observed Value", yl
 #' \donttest{
 #'  require(randomForest)
 #'  data(housing)
-#'  x <- a3(MED.VALUE ~ NOX + PUPIL.TEACHER + ROOMS + AGE + HIGHWAY + 0, housing, randomForest, p.acc = NULL, n.folds = 2)
+#'  
+#'  x <- a3(MED.VALUE ~ NOX + PUPIL.TEACHER + ROOMS + AGE + HIGHWAY + 0,
+#'    housing, randomForest, p.acc = NULL, n.folds = 2)
+#'  
 #'  plotSlopes(x)
 #'  }
 
@@ -562,7 +589,7 @@ print.A3 <- function(x, ...){
 #'  xtable(x)
 
 xtable.A3 <- function(x, ...){
-  require(xtable)
+  # require(xtable) # not needed due to depends
   if(class(x) != "A3"){
     stop("'x' must be of class 'A3'.")
   }
@@ -660,7 +687,8 @@ a3.r2 <- function(y, x, simulate.fn, cv.folds){
 #'  # Calculate the A3 results assuming an auto-correlated set of observations.
 #'  # In usage p.acc should be <=0.01 in order to obtain more accurate p values.
 #'  
-#'  a3.lm(rating ~ ., attitude, p.acc = 0.1, data.generating.fn = replicate(ncol(attitude), a3.gen.autocor))
+#'  a3.lm(rating ~ ., attitude, p.acc = 0.1,
+#'    data.generating.fn = replicate(ncol(attitude), a3.gen.autocor))
 #'  }
 #'  
 #'  ## A general illustration:
